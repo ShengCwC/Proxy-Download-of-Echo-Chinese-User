@@ -18,6 +18,8 @@ jobs:
           node-version: 22
       - run: npm install --no-save --package-lock=false --ignore-scripts puppeteer-core@25.14.0
       - run: xvfb-run --auto-servernum node scripts/probe-origin.mjs
+        env:
+          ECHO_PROBE_URL: ${{ secrets.ECHO_PROBE_URL }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
