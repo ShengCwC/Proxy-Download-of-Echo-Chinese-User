@@ -1,9 +1,9 @@
-name: Origin browser reachability probe
+name: Live browser origin validation
 on:
+  workflow_dispatch:
   push:
     branches: [codex/live-origin-probe]
     paths:
-      - scripts/probe-origin.mjs
       - .github/workflows/origin-probe.yml
       - origin/**
       - src/**
@@ -15,6 +15,8 @@ jobs:
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 4
+    env:
+      ECHO_PROBE_URL: ${{ secrets.ECHO_PROBE_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,14 +25,14 @@ jobs:
       - run: npm ci && npm ci --prefix origin --ignore-scripts
       - run: npm test
       - run: xvfb-run --auto-servernum node scripts/test-live-origin.mjs
-        env:
-          ECHO_PROBE_URL: ${{ secrets.ECHO_PROBE_URL }}
+        if: env.ECHO_PROBE_URL != ''
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: origin-browser-probe
           path: .local/live-origin-test/
           retention-days: 2
+          if-no-files-found: ignore
   container:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
