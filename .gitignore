@@ -1,0 +1,13 @@
+# Local inspection responses can contain temporary signed download URLs.
+.local/
+.env
+.env.*
+!.env.example
+
+# Third-party installers are not project source code.
+*.exe
+*.msi
+
+node_modules/
+dist/
+coverage/
