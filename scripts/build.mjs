@@ -12,7 +12,7 @@ export const rawPlugin = {
 
 export async function bundle() {
   await mkdir('dist', { recursive: true });
-  const common = { bundle: true, target: 'es2022', platform: 'browser', plugins: [rawPlugin], legalComments: 'none', charset: 'utf8' };
+  const common = { bundle: true, target: 'es2022', platform: 'browser', plugins: [rawPlugin], loader: { '.png': 'base64' }, legalComments: 'none', charset: 'utf8' };
   await build({ ...common, entryPoints: ['src/edgeone.mjs'], outfile: 'dist/edgeone.js', format: 'iife' });
   await build({ ...common, entryPoints: ['src/worker.mjs'], outfile: 'dist/worker.mjs', format: 'esm' });
   await build({ ...common, entryPoints: ['src/handler.mjs'], outfile: 'dist/handler.mjs', format: 'esm' });

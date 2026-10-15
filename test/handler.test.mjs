@@ -81,3 +81,14 @@ test('HTML, assets and HEAD are available without upstream access', async () => 
   const head = await handle(new Request('https://proxy.test/', { method: 'HEAD' }));
   assert.equal(await head.text(), '');
 });
+
+test('mirror import uses expired official URL only as filename metadata without contacting blocked origin', async () => {
+  const handle = createHandler({ now: () => NOW, fetcher: async () => { throw new Error('must not contact Echo'); } });
+  const response = await handle(post('/api/mirror', { url: signed('20261015T050000Z') }));
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.delivery, 'mirror'); assert.equal(result.expiresAt, null);
+  assert.equal(result.filename, 'echo-test.exe'); assert.match(result.download, /^\/mirror\/[a-f0-9]{64}\/echo-test.exe$/);
+  assert.equal((await handle(post('/api/mirror', { url: signed().replace('builds.echo.ac', 'evil.test') }))).status, 400);
+  assert.equal((await handle(new Request('https://proxy.test/mirror/' + '0'.repeat(64) + '/echo.exe'))).status, 404);
+});

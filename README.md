@@ -1,111 +1,127 @@
 # Echo 中国大陆下载加速
 
-为 `https://dl.echo.screenshare.cn` 编写的 EdgeOne 下载网关。接收 Echo 原始下载链接，解析官方短期签名地址，通过边缘函数流式转发原始安装程序。
+正式入口：https://dl.echo.screenshare.cn
 
-## 当前上线状态（2026-10-15）
+通过真实浏览器取得 Echo 官方 Windows 程序，校验数字签名后发布固定版本镜像，交给腾讯云 EdgeOne 缓存和流式分发。无需独立服务器。页面复用 www.screenshare.cn 的浅色、蓝黑视觉和真实 Logo。
 
-- 正式入口：https://dl.echo.screenshare.cn ，DNS、有效 HTTPS 证书、专用域名触发规则已生效。
-- **实际加速仍被 Echo 官方验证阻断，不能视为可用的下载加速成品。** 本次 EdgeOne 真实请求在入口和文件服务两个阶段均遇到 Cloudflare 验证；浏览器取得的新鲜签名链接也未能让边缘节点取到文件。
-- 另外验证过 Cloudflare Worker 普通回源，同样受阻；临时测试 Worker 已删除，没有增加生产依赖。
-- 页面明确提示当前不可用，并提供官方直连。没有成功通过本服务下载完整安装包，因此没有本站加速速度或大陆节点测速结论。
-- 网关版本 `1.0.2`；23 项自动测试通过，包括 EdgeOne 的 ArrayBuffer 数据块、流式背压及取消、官方鉴权、浏览器辅助入口和 HTTPS 跳转。
+## 实际验收
 
-解除阻断需要 Echo 提供允许服务器回源的下载接口，或给出针对本服务的验证豁免/受信任回源方案；签名校验应继续保留。不要把共享浏览器 Cookie、自动解验证码或取消官方鉴权当作生产方案。
+2026-10-15 已通过正式域名完整下载 88,946,336 字节，SHA-256 与独立通过官方浏览器取得的原件完全一致，下载后的 Authenticode 签名有效。单连接首次冷回源耗时 157.05 秒，缓存命中下载耗时 156.19 秒；使用页面相同的 6 路下载模块测得完整下载及哈希校验 6.30 秒（22 个分段请求中 5 次命中缓存、17 次回源）。这是当前电脑和所命中节点的观察，不是中国大陆速度承诺。
 
-取得官方支持后，先运行真实完整下载，核对官方原文件的大小、SHA-256 和数字签名，并测试不同入口与分段请求；全部通过后再移除 `src/page.mjs` 中的“加速线路暂不可用”通知。
+真实 Edge 浏览器已验证：粘贴旧的 builds 地址、读取官方专属文件名、并行下载、完整哈希校验、保存文件，以及取消下载。保存后的文件再次独立核对哈希和 Authenticode 签名。页面、两份脚本、样式、Logo 和 favicon 的线上原始字节与本地构建一致。
 
-## 使用
+## 下载方式
 
-- 打开首页，粘贴 `https://dl.echo.ac/<链接标识>`。
-- 也可直接将原始链接的域名改为 `dl.echo.screenshare.cn`，保留路径。
-- 获取地址后点击下载。完整保留 Echo 指定的文件名；当前线路限制见上方状态。
-- 如果入口要求 Cloudflare 验证，打开 Echo 官方页面完成验证，复制 `click here` 按钮的链接，粘贴到“临时文件地址”。也可使用页面提供的取链书签。
-- 如果**文件服务**同样要求浏览器验证，网关明确提示并提供官方直连，不把验证页保存成 `.exe`。
+- **直接下载镜像**：首页点击“下载镜像文件”，得到通用文件名 `echo.exe`。
+- **保留官方专属文件名**：粘贴 `https://dl.echo.ac/<标识>`。如果入口要求浏览器验证，在官方页面完成验证，再复制 `click here` 的链接到本站。首页输入框和辅助输入框都接受 `builds.echo.ac/echo.exe?...`。
+- **旧的 builds 地址也可使用**：镜像模式只读取文件名，不再尝试使用过期签名向 Echo 下载文件。文件内容来自页面明确标注的镜像版本。
+- 页面提供取链书签：用户在官方页面主动点击书签，带回可见的下载链接，不读取 Cookie，不自动处理验证码。
+- 现代浏览器默认使用 6 路并行下载，显示进度、支持取消，全部收齐并通过完整 SHA-256 校验后才保存文件。网络异常时提供普通浏览器下载入口；哈希不符会阻止保存。并行模式在用户浏览器内占用约两份文件大小的内存，关闭页面会中断下载。
 
-这是独立下载加速服务，与 Echo 无隶属关系。只支持已验证的 `dl.echo.ac → builds.echo.ac/echo.exe` 链路，不替用户生成 PIN，也不访问 Echo 账户 API。
+镜像不生成或验证 Echo PIN，也不保证 PIN 仍然有效。程序运行时的使用权限由 Echo 判定。通用文件名不承诺自动关联工单；需要专属关联时应使用官方给出的完整文件名。
 
-## 本地开发
+## 已验证的下载逻辑
 
-需要 Node.js 22 或更新版本。
+1. Echo 原始下载页面返回 HTML，其中 `#dlURL` 是临时文件链接，并通过 JavaScript 自动开始下载。
+2. 链接指向 `builds.echo.ac/echo.exe`，使用 AWS SigV4 查询签名。实测有效期为 120 秒；`response-content-disposition` 指定专属文件名。
+3. 官方入口与文件站都可能要求 Cloudflare 浏览器验证。EdgeOne 普通回源、Cloudflare Worker 回源及 Cloudflare Browser Run 的云端 Chromium 实测均不能稳定通过；复制签名地址并不能解决文件站验证。
+4. 本项目使用真实用户浏览器下载一次官方文件，再分发明确标注日期的快照。云端不依赖共享 Cookie、伪装浏览器或验证码代答。
+
+2026-10-15 获取的文件为 **88,946,336 字节**。Windows Authenticode 验证为 **Valid / Inspect Element Ltd**。SHA-256：
+
+```
+19c8b6a7dab8c58a599878faa551053508e74abd6714d624eaf178ce33dbe8d2
+```
+
+镜像是当次从 `builds.echo.ac/echo.exe` 获取的文件，并不保证所有产品或未来版本均相同。**官方发布新版本后，需要重新下载、校验并发布；当前没有无人值守通过 CF 的自动同步承诺。** 页面显示镜像同步日期，用户可以选择官方直连获取最新文件。
+
+## 分发架构
+
+```
+官方网页 → 真实浏览器下载 → Authenticode / SHA-256 校验
+                              ↓
+                  GitHub Release 固定哈希版本
+                              ↓
+                   EdgeOne 固定版本缓存
+                              ↓
+                dl.echo.screenshare.cn → 用户
+```
+
+- 二进制文件以通用名称 `echo.exe` 放在本仓库 Releases，文件不进入 Git 历史；不上传真实 PIN、专属文件名、签名 URL、Cookie 或账号凭据。
+- `src/mirror-manifest.json` 固定完整文件 SHA-256、长度、同步日期和源文件地址。
+- 冷缓存时 EdgeOne 请求固定 Release，检查状态、类型、长度及 Content-Range；完整 GET 的原生响应流同时写入 Cache API。冷缓存 Range 直接转发且不缓存 206；完整缓存可直接提供 Range。
+- 缓存键使用含内容哈希的固定 Release 地址，不含 PIN 或用户文件名；不同用户共用二进制。不能用本函数触发域名做 Cache API 的缓存键，否则 EdgeOne 会返回 `forbidden cdn cache`。最终用户响应带独立 Content-Disposition，保持 private/no-store，避免串文件名。
+- 边缘函数直接使用平台原生响应流，不在边缘 JavaScript 中加载或计算整个约 85 MiB 文件。适配 EdgeOne 的 200 ms CPU 限制及没有 Request.signal 的请求。最终的完整哈希校验由用户浏览器完成；普通浏览器下载入口不执行这一步。
+- 发布前验证完整哈希、官方数字签名和 GitHub 资产摘要，部署后再次完整下载核对哈希；并非每次下载都在边缘函数计算哈希。信任已校验且不覆盖的 Release 资产，生产更新必须重新走发布校验流程。
+- 支持 HEAD、单段 Range、后缀 Range、If-Range、206、416；版本路径固定，续传不会静默拼接不同版本。
+- `X-Echo-Mirror-Cache` 表示该次文件请求的缓存状态，不表示所有地区均已预热。缓存仅在当前 EdgeOne 节点有效。
+- 禁止公共上传、任意回源或用户提供镜像源。旧的 `/api/resolve`、`/api/import` 与 `/download/*` 保留为实时代理接口，仍由 Echo 验证签名，可能被 CF 阻止；它们与公开镜像的语义独立。
+
+实际速度取决于用户所在节点、缓存状态、套餐和网络。海外单机的验证结果不等于中国大陆全网测速。
+
+## 本地开发和验证
+
+需要 Node.js 22+。
 
 ```sh
 npm ci
-npm test
+npm run check
 npm run dev
 ```
 
-浏览器打开 `http://127.0.0.1:4173`。默认只监听本机。
+打开 `http://127.0.0.1:4173`。修改代码后重启开发服务器并刷新浏览器。
 
 ```sh
-npm run build
+npm run smoke -- --mirror
+npm run smoke -- --parallel
 ```
 
-输出：
+这两个命令分别使用普通单连接和页面相同的并行模块，从正式域名下载完整镜像到 Git 忽略的 `.local/verified-download.exe`，比对清单中的大小和 SHA-256，输出时长和缓存状态。`BASE_URL` 可用于其他环境。设置 `ECHO_TEST_ENTRY` 后可测试专属入口或 builds 地址；脚本不输出这些地址。
 
-| 文件 | 用途 |
-| --- | --- |
-| `dist/edgeone.js` | EdgeOne 原生边缘函数，直接粘贴部署 |
-| `dist/worker.mjs` | 标准模块 Worker 适配器，供其他兼容环境使用 |
-| `dist/handler.mjs` | 本地 Web Request / Response 处理器 |
+自动测试覆盖原代理的上游限制与签名语义，以及镜像的续传、缓存复用、字节一致性、错误响应拦截、取消、旧地址读取文件名、EdgeOne 兼容性和并行下载的重组与哈希校验。
 
-运行时无第三方依赖；构建使用固定版本的 esbuild。源代码、构建锁文件和测试保存在本仓库；第三方安装程序不入库。
+## 同步新官方版本
+
+在已登录 GitHub CLI 的 Windows 电脑上，需要 PowerShell 7 (`pwsh.exe`)：
+
+1. 使用真实浏览器从官方页面下载新文件，勿运行或修改安装程序。
+2. 执行以下命令。脚本要求有效的 Inspect Element Ltd 数字签名，检查 PE 文件前缀和大小，以完整文件哈希前缀创建新的 Release，并核对 GitHub 返回的资产摘要。
+
+```powershell
+node scripts/prepare-mirror.mjs 'D:\Downloads\官方下载的文件.exe' --publish
+npm run check
+```
+
+3. 检查 `src/mirror-manifest.json`，提交源代码后部署 `dist/edgeone.js`。
+4. 执行 `npm run smoke -- --mirror`，并核对下载文件的数字签名。
+
+不带 `--publish` 只生成本地清单和 `.local/publish` 发布材料，**不能**把尚未上传的清单部署到生产。相同哈希的 Release 已存在时脚本会停止，不覆盖已有资产。不要用旧文件重新生成日期以声称已同步新版。
+
+回滚时恢复上一份清单和函数代码即可。旧哈希缓存不会污染新版本。删除旧 Release 前应确认已无部署依赖它。
 
 ## EdgeOne 部署
 
-1. 在已备案域名 `screenshare.cn` 的 EdgeOne 站点中添加 `dl.echo.screenshare.cn`，加速区域包含中国大陆。为该确切域名配置 HTTPS 证书；`*.screenshare.cn` 证书不覆盖 `dl.echo.screenshare.cn`。
-2. 源站设置为 `dl.echo.ac`，HTTPS 回源，回源 Host 使用 `dl.echo.ac`。源站仅作为配置要求的兜底；正常请求由函数处理。
-3. 新建独立边缘函数，将 `dist/edgeone.js` 的完整内容粘贴并部署。
-4. 新建触发规则：**HOST 等于 `dl.echo.screenshare.cn`，所有路径**。不要将函数绑定到整个 `screenshare.cn` 站点。
-5. 对此 HOST 关闭强制节点缓存、状态码缓存和离线缓存，遵守函数返回的 `private, no-store`。不要忽略签名参数后缓存整个下载响应。
-6. 配置 DNS 为 EdgeOne 控制台分配的 CNAME。不要在另一层 CDN 再启用代理。
-7. 在此域名范围配置平台请求频率及流量告警，避免影响站点其他业务。上线前验证 HTTPS、`/health`、获取链接、完整下载与失败恢复。
+`npm run build` 输出 `dist/edgeone.js`（原生函数）、`dist/worker.mjs`（模块适配器）、`dist/handler.mjs`（本地运行时）。运行时没有第三方依赖；构建依赖固定版本 esbuild。
 
-部署不需要 Echo API Key、浏览器 Cookie或网关签名密钥。函数默认访问域名同样执行严格上游限制与官方鉴权。
+现有站点：`zone-3v9z946rdfuy`；函数：`ef-bunm52g3`；触发规则只匹配 **HOST 等于 `dl.echo.screenshare.cn`**。不要绑定整个主域。独立 HTTPS 证书覆盖该确切域名。
 
-## Cloudflare 验证与设计边界
+在函数管理中粘贴完整 `dist/edgeone.js` 并保存部署。确认 `/health` 的版本、镜像哈希、正式页面和完整下载。原有 `dl.echo.ac` 源站配置只是平台配置兜底；镜像实际由函数按清单获取。
 
-1. **自动模式**：函数获取官方入口 HTML，读取 `#dlURL` 或 JSON 字符串形式的下载地址，再请求文件。
-2. **浏览器辅助模式**：用户在 Echo 官方页面完成验证后，将该页面已经提供的短期文件地址交给网关。书签仅读取 `#dlURL`，使用 URL fragment 带回本站；页面立即移除 fragment，再以同源 POST 提交。书签不读取 Cookie，不解决验证码，不改变 Echo 的权限。
-3. **文件服务验证**：如果 `builds.echo.ac` 对边缘出口也返回验证页，浏览器辅助取链不能解决文件回源。需要 Echo 提供受信任回源接口，或用户使用官方直连。产品不会显示虚假的“加速成功”。
-
-本地浏览器可以访问，不代表任意服务端出口都能访问；必须测试部署地区的实际请求。即使回源成功，未缓存转发的速度仍受回源链路限制，不承诺固定倍数提速。
-
-## 安全与正确性
-
-- 仅允许固定 HTTPS 上游主机和文件路径；拒绝用户信息、非标准端口、额外入口参数、重复签名参数和跨域跳转。不是通用 URL 代理。
-- 客户端 Cookie、Authorization、Referer 等不会发送给 Echo。代码不记录完整下载链接或查询字符串。
-- `/download/<ticket>` 的 ticket 是地址编码，**不是签名，也不是独立授权凭据**。签名格式及时间检查只用于提前报错；每次下载始终回到 Echo，由 Echo 验证真正的签名。
-- 所有响应禁止共享缓存。过期或伪造的签名不能命中本地缓存取得文件。云平台访问日志仍可能包含下载路径，生产环境应按敏感凭据设置脱敏及留存。
-- 不执行上游网页脚本；不转发上游 HTML、Cookie 或跳转。对文件响应检查状态、类型、分段字段和从零开始的 `MZ` 文件前缀。前缀检查不等同于病毒检测或数字签名验证。
-- 支持单段 Range、If-Range、206 和 416。HEAD 以 GET `bytes=0-0` 向源站查询，避免将 GET 签名误用于 HEAD。
-- 未开始输出的完整下载遇到过期/拒绝时，可以重新解析原入口一次。分段下载不自动换新文件，避免不同版本拼接。
-- 采用背压流式传输；用户取消时取消上游读取。25 秒响应头超时、120 秒读取空闲超时；不将整个安装包读入内存。
-- 兼容 EdgeOne 的 ArrayBuffer、ArrayBufferView 和字符串流块；用无自定义 transformer 的 TransformStream 构造输出流，避免依赖 EdgeOne 不支持的 ReadableStream 构造函数。
-- 导入的签名地址会先通过实际 GET 小范围请求检查上游鉴权与可达性；每次真正下载仍重新请求官方，不把预检查当作可复用授权。
-- 原始下载文件名必须保留；不改写安装包字节，不提供未经更新校验的长期镜像。
-
-未来若增加跨用户文件缓存，需要先落实可验证的授权入口、版本键、逐请求文件名、过期语义及缓存前鉴权，不能只删除 `X-Amz-*` 参数合并缓存。
+保持页面、API、用户下载响应遵守 private/no-store；不要在规则引擎强制缓存它们。文件缓存由函数内部 Cache API 管理。发布和更新需关注 EdgeOne 套餐请求及流量用量。
 
 ## 接口
 
-| 方法与路径 | 含义 |
+| 方法与路径 | 用途 |
 | --- | --- |
-| `GET /` | 下载页 |
-| `GET /<链接标识>` | 自动解析该 Echo 入口的下载页 |
-| `POST /api/resolve` | JSON `{ "url": "https://dl.echo.ac/<标识>" }` |
-| `POST /api/import` | JSON `{ "url": "<完整官方签名地址>", "entry": "<可选原入口>" }` |
-| `GET /download/<ticket>` | 流式转发；官方验证签名 |
-| `HEAD /download/<ticket>` | 查询文件元信息 |
-| `GET /health` | 版本和运行状态；不承诺上游可用 |
+| `GET /`、`GET /<标识>` | 下载页面 |
+| `POST /api/mirror` | JSON `{ "url": "<官方入口或 builds 文件地址>" }`；返回镜像版本和专属文件名 |
+| `GET/HEAD /mirror/<sha256>/<filename>` | 下载固定快照，公开可访问，不将签名格式当授权 |
+| `GET /health` | 代码版本和镜像元数据；不代表所有回源/缓存节点均可用 |
+| `POST /api/resolve`、`POST /api/import` | 兼容旧的官方实时代理流程 |
+| `GET/HEAD /download/<ticket>` | 实时回源，每次仍由 Echo 校验签名 |
 
-解析接口返回 `filename`、`expiresAt`、`download` 和可用时的 `entry`。错误响应包含稳定的 `code`、用户可读 `message` 和出错阶段 `stage`。文件下载错误返回明确的恢复页面，绝不使用附件响应头。
+`/api/mirror` 导入的签名 URL 仅是文件名来源，不能验证其真伪或当前授权；不会把它的内容当成新镜像。公开镜像与官方签名时效无关，因此它的 `expiresAt` 为 `null`。需要最新官方程序时应使用官方入口。
 
-## 验证依据
+所有输入均限定主机、路径、长度及参数，文件名限定安全 ASCII `.exe`。同源 POST 拒绝跨站提交。代码不记录完整链接；云平台访问日志仍可能包含带专属文件名的路径，应按业务要求设置留存。
 
-2026-10-15 的分析观察到：入口返回 HTML，并通过 JavaScript 导航到 `builds.echo.ac/echo.exe`；示例文件地址有效期为 120 秒。同一入口两次下载的文件均为 88,946,336 字节，SHA-256 一致，Windows 验证显示 Inspect Element Ltd 签名有效。该结果不等同于所有 PIN、产品和未来版本都共享相同文件。
-
-测试采用人工构造的非敏感链接，不包含用户的真实 PIN 或签名。运行 `npm test` 验证解析、上游边界、挑战识别、过期恢复、分段语义、流式取消及端到端路由。
-
-`npm run smoke` 检查生产健康端点。设置环境变量 `ECHO_TEST_ENTRY` 后还会实际下载文件到被 Git 忽略的 `.local/verified-download.exe`，输出长度和 SHA-256；可用 `EXPECTED_SHA256` 指定独立取得的官方文件哈希。`BASE_URL` 可覆盖测试站点。脚本不会输出原始链接、文件名或临时签名。
-
-参考：[EdgeOne Fetch](https://cloud.tencent.com/document/product/1552/81897)、[EdgeOne Range GETs](https://edgeone.ai/document/46966)、[EdgeOne ReadableStream](https://cloud.tencent.com/document/product/1552/81914)、[EdgeOne 流数据块](https://cloud.tencent.com/document/product/1552/81924)、[AWS 签名地址](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)、[Echo API](https://developer.echo.ac/register/)。
+参考：[EdgeOne Cache API](https://cloud.tencent.com/document/product/1552/81893)、[EdgeOne 流](https://cloud.tencent.com/document/product/1552/81914)、[Cloudflare Browser Run FAQ](https://developers.cloudflare.com/browser-run/faq/)、[GitHub Release 资产](https://docs.github.com/en/rest/releases/assets)、[AWS 签名地址](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)。

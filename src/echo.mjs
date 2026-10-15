@@ -30,7 +30,7 @@ export function parseEntry(value) {
   return url.href;
 }
 
-export function parseSigned(value, now = Date.now(), minimumLifetime = 0) {
+export function parseSigned(value, now = Date.now(), minimumLifetime = 0, { metadataOnly = false } = {}) {
   if (typeof value !== 'string' || value.length > 4096 || /[\r\n\x00]/.test(value)) fail('INVALID_FILE_LINK', '文件地址格式不正确。', 400, 'file');
   let url;
   try { url = new URL(value); } catch { fail('INVALID_FILE_LINK', '文件地址格式不正确。', 400, 'file'); }
@@ -50,7 +50,7 @@ export function parseSigned(value, now = Date.now(), minimumLifetime = 0) {
   const issued = Date.parse(iso);
   if (!Number.isFinite(issued) || new Date(issued).toISOString().slice(0, 19) !== iso.slice(0, 19) || issued > now + 60000) fail('INVALID_FILE_LINK', '签名时间无效。', 400, 'file');
   const expiresAt = issued + Number(seconds) * 1000;
-  if (expiresAt <= now + minimumLifetime) fail('LINK_EXPIRED', '临时下载地址已过期或即将过期，请重新获取。', 410, 'file');
+  if (!metadataOnly && expiresAt <= now + minimumLifetime) fail('LINK_EXPIRED', '临时下载地址已过期或即将过期，请重新获取。', 410, 'file');
   const disposition = p.get('response-content-disposition') || '';
   const name = /^attachment;\s*filename="([A-Za-z0-9._-]{1,200}\.exe)"$/i.exec(disposition)?.[1];
   if (!name || name.includes('..')) fail('INVALID_FILENAME', '无法确认官方文件名，请重新获取下载链接。', 400, 'file');
