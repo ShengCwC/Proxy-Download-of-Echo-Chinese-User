@@ -4,6 +4,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 
 const target = 'https://builds.echo.ac/echo.exe';
 await mkdir('.local/origin-probe', { recursive: true });
+const raw = await fetch(target, { headers: { Range: 'bytes=0-31' }, signal: AbortSignal.timeout(20000) });
+const direct = { status: raw.status, type: raw.headers.get('content-type'), cfMitigated: raw.headers.get('cf-mitigated') };
+await raw.body?.cancel();
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome',
   headless: false,
@@ -23,7 +26,7 @@ try {
   }
   const title = await page.title();
   const text = await page.evaluate(() => document.body?.innerText.slice(0, 700) || '');
-  const result = { checkedAt: new Date().toISOString(), target, browser: await browser.version(), ...lastResponse, title, text, navigationError, challenge: lastResponse?.cfMitigated === 'challenge' || /just a moment|attention required/i.test(title) };
+  const result = { checkedAt: new Date().toISOString(), target, direct, browser: await browser.version(), ...lastResponse, title, text, navigationError, challenge: lastResponse?.cfMitigated === 'challenge' || /just a moment|attention required/i.test(title) };
   await page.screenshot({ path: '.local/origin-probe/browser.png', fullPage: true });
   await writeFile('.local/origin-probe/result.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
