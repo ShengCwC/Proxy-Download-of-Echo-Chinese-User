@@ -1,0 +1,26 @@
+name: Origin browser reachability probe
+on:
+  push:
+    branches: [codex/live-origin-probe]
+    paths:
+      - scripts/probe-origin.mjs
+      - .github/workflows/origin-probe.yml
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save --package-lock=false --ignore-scripts puppeteer-core@25.14.0
+      - run: xvfb-run --auto-servernum node scripts/probe-origin.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: origin-browser-probe
+          path: .local/origin-probe/
+          retention-days: 2
