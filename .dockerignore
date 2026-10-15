@@ -1,0 +1,9 @@
+*
+!origin/
+!origin/Dockerfile
+!origin/*.mjs
+!origin/package.json
+!origin/package-lock.json
+!src/
+!src/echo.mjs
+!src/live-protocol.mjs

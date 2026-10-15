@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import { bundle } from './build.mjs';
 await bundle();
 const { createHandler } = await import('../dist/handler.mjs');
-const handler = createHandler();
+const handler = createHandler({ originUrl: process.env.ECHO_ORIGIN_URL, originKey: process.env.ECHO_ORIGIN_KEY });
 const host = '127.0.0.1';
 const port = Number(process.env.PORT || 4173);
 const server = http.createServer(async (req, res) => {
