@@ -69,6 +69,10 @@ npm run smoke
 
 SHA-256：`19c8b6a7dab8c58a599878faa551053508e74abd6714d624eaf178ce33dbe8d2`。与独立官方浏览器下载原件一致，Windows Authenticode 为 **Valid / Inspect Element Ltd**。此数值只作为本次验收记录，没有写进未来下载的固定清单。
 
-以上耗时来自当前测试网络，不等于中国大陆各运营商速度保证。正式域名的最终验收数据在发布时补充。
+正式域名已部署 2.0.0。2026-10-15 11:04:55 UTC 开始的完整下载验收用时 **40.44 秒**，字节数与 SHA-256 同上，Authenticode 有效。在线页面、脚本、Logo、favicon 的原始字节哈希与构建源码一致；私有接口、旧镜像路径及非白名单地址均已验证拒绝。
+
+同日 11:08 UTC 在真实 Edge 浏览器中粘贴新链接并点击下载，页面完成 100% 校验，文件实际保存到系统下载目录；重新读取磁盘文件所得长度、SHA-256 与上述原件一致，Authenticode 为 Valid。没有运行安装程序。最终验证包含 29 项 Node 测试及 2 组 Python 协议测试。
+
+以上耗时来自当前测试网络，不等于中国大陆各运营商速度保证。
 
 早期真实 Chromium 全链路验证可见 [GitHub 测试记录](https://github.com/ShengCwC/Proxy-Download-of-Echo-Chinese-User/actions/runs/38710593725)。GitHub Actions 仅执行测试，不承担生产下载。旧固定镜像仅存在于 Git 历史，2.0 不再提供该下载路径。

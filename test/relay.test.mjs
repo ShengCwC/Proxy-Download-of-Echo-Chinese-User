@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { relay } from '../src/relay.mjs';
 
+test('zone errors work without the newer static Response.json API', async () => {
+  const original = Response.json;
+  Response.json = undefined;
+  try {
+    const missing = await relay(new Request('https://dl.echo.screenshare.cn/read'));
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { code: 'NOT_FOUND' });
+    const offline = await relay(new Request('https://dl.echo.screenshare.cn/health'), async () => { throw new Error('network failure'); });
+    assert.equal(offline.status, 502);
+    assert.equal((await offline.json()).code, 'ORIGIN_UNREACHABLE');
+    assert.match(offline.headers.get('cache-control'), /no-store/);
+  } finally { Response.json = original; }
+});
+
 test('mainland relay excludes private routes, cookies, authorization and query strings', async () => {
   let called = false;
   const fetcher = async (url, init) => {

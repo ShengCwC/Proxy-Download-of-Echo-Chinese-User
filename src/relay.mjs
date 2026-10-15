@@ -1,12 +1,16 @@
 // The existing mainland EdgeOne domain forwards to the independently deployed
 // Makers application. Private origin credentials stay in Makers environment vars.
 const APP = 'https://echo-origin.screenshare.cn';
+// The zone function runtime does not implement the static Response.json helper.
+function json(data, status) {
+  return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'private, no-store', 'CDN-Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+}
 export async function relay(request, fetcher = fetch) {
   const incoming = new URL(request.url);
   if (incoming.protocol === 'http:') { incoming.protocol = 'https:'; return Response.redirect(incoming.href, 308); }
   if (!['GET', 'HEAD', 'POST'].includes(request.method)) return new Response(null, { status: 405 });
   const publicPaths = new Set(['/', '/style.css', '/app.js', '/transfer.js', '/assets/logo-light.png', '/assets/favicon-light.png', '/robots.txt', '/health', '/api/prepare', '/api/chunk']);
-  if (!publicPaths.has(incoming.pathname)) return Response.json({ code: 'NOT_FOUND' }, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+  if (!publicPaths.has(incoming.pathname)) return json({ code: 'NOT_FOUND' }, 404);
   const target = new URL(APP);
   target.pathname = incoming.pathname;
   // All download inputs are POST JSON. Query strings are never forwarded or cached.
@@ -16,7 +20,7 @@ export async function relay(request, fetcher = fetch) {
   try {
     response = await fetcher(target.href, { method: request.method, headers, ...(request.method === 'POST' ? { body: request.body } : {}), redirect: 'manual', eo: { timeoutSetting: { connectTimeout: 10000, readTimeout: 60000, writeTimeout: 15000 } } });
   } catch {
-    return Response.json({ code: 'ORIGIN_UNREACHABLE', message: '下载连接中断，请重新获取官方链接。' }, { status: 502, headers: { 'Cache-Control': 'private, no-store' } });
+    return json({ code: 'ORIGIN_UNREACHABLE', message: '下载连接中断，请重新获取官方链接。' }, 502);
   }
   const result = new Headers(response.headers);
   for (const name of ['set-cookie', 'makers-conversation-id', 'makers-run-id', 'eo-pages-inner-scf-status', 'eo-pages-inner-status-intercept']) result.delete(name);
@@ -30,4 +34,3 @@ export async function relay(request, fetcher = fetch) {
   return new Response(response.body, { status: response.status, headers: result });
 }
 if (typeof addEventListener === 'function') addEventListener('fetch', event => event.respondWith(relay(event.request)));
-
