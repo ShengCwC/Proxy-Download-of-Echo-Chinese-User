@@ -3,7 +3,7 @@ import { downloadVerified } from '../src/transfer.mjs';
 const base = new URL(process.env.BASE_URL || 'https://dl.echo.screenshare.cn');
 const health = await fetch(new URL('/health', base), { signal: AbortSignal.timeout(20000) });
 const state = await health.json();
-if (!health.ok || !state.ok || state.mode !== 'live-browser' || !state.configured) throw new Error('Live browser origin is not configured on this deployment');
+if (!health.ok || !state.ok || state.mode !== 'live-origin' || !state.configured) throw new Error('Live origin is not configured on this deployment');
 console.log(JSON.stringify({ check: 'health', ok: true, version: state.version }));
 const sourceUrl = process.env.ECHO_TEST_URL;
 if (!sourceUrl) { console.log('Set ECHO_TEST_URL to a fresh full builds URL for a real download. URLs are never logged.'); process.exit(0); }

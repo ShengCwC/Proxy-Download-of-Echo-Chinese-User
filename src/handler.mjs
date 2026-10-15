@@ -31,11 +31,22 @@ export function createHandler({ fetcher = fetch, now = () => Date.now(), originU
     const timer = setTimeout(abort, 50000);
     try {
       if (signal?.aborted) controller.abort();
-      const response = await fetcher(target.href, {
+      let response = await fetcher(target.href, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${originKey}` },
         body: JSON.stringify(input), redirect: 'manual', signal: controller.signal,
         eo: { timeoutSetting: { connectTimeout: 10000, readTimeout: 50000, writeTimeout: 15000 } },
       });
+      if (response.status === 200 && response.headers.get('x-echo-origin-encoding') === 'base64') {
+        const expected = input.end - input.start + 1;
+        const encoded = JSON.parse(await readLimited(response, Math.ceil(expected / 3) * 4 + 4096));
+        inspectRange(encoded.status, encoded.headers, input);
+        if (typeof encoded.bytes !== 'string' || encoded.bytes.length !== Math.ceil(expected / 3) * 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded.bytes)) throw liveError('INVALID_FILE_RESPONSE', '下载分段编码不正确。');
+        const raw = atob(encoded.bytes);
+        if (raw.length !== expected) throw liveError('INVALID_FILE_RESPONSE', '下载分段长度不正确。');
+        const bytes = new Uint8Array(raw.length);
+        for (let n = 0; n < raw.length; n++) bytes[n] = raw.charCodeAt(n);
+        response = new Response(bytes, { status: 206, headers: encoded.headers });
+      }
       if (response.status !== 206) {
         let error;
         try { error = JSON.parse(await readLimited(response, 4096)); } catch { /* No upstream body is reflected. */ }
@@ -69,7 +80,7 @@ export function createHandler({ fetcher = fetch, now = () => Date.now(), originU
       if (['/api/prepare', '/api/chunk'].includes(url.pathname)) {
         if (request.method !== 'POST') return secure(json({ code: 'METHOD_NOT_ALLOWED' }, 405));
         const origin = request.headers.get('origin');
-        if ((origin && origin !== url.origin) || request.headers.get('sec-fetch-site') === 'cross-site') throw liveError('INVALID_ORIGIN', '请从本站下载页面操作。', 403);
+        if ((origin && origin !== url.origin && origin !== 'https://dl.echo.screenshare.cn') || request.headers.get('sec-fetch-site') === 'cross-site') throw liveError('INVALID_ORIGIN', '请从本站下载页面操作。', 403);
         if (!request.headers.get('content-type')?.startsWith('application/json')) throw liveError('INVALID_BODY', '请求格式不正确。', 415);
         let input;
         try { input = JSON.parse(await readLimited(request, 8192)); }
@@ -90,7 +101,7 @@ export function createHandler({ fetcher = fetch, now = () => Date.now(), originU
       } else if (url.pathname.startsWith('/mirror/') || ['/api/mirror', '/api/import', '/api/resolve'].includes(url.pathname) || url.pathname.startsWith('/download/')) {
         response = json({ code: 'LEGACY_ROUTE_REMOVED', message: '请回到首页，提交有效的 builds.echo.ac 完整文件地址以下载官方当前版本。' }, 410);
       } else if (!['GET', 'HEAD'].includes(request.method)) response = json({ code: 'METHOD_NOT_ALLOWED' }, 405);
-      else if (url.pathname === '/health') response = json({ ok: true, version: VERSION, mode: 'live-browser', configured: Boolean(originUrl && /^[a-f0-9]{64}$/.test(originKey || '')), cache: 'no-store' });
+      else if (url.pathname === '/health') response = json({ ok: true, version: VERSION, mode: 'live-origin', configured: Boolean(originUrl && /^[a-f0-9]{64}$/.test(originKey || '')), cache: 'no-store' });
       else if (url.pathname === '/') response = new Response(page, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       else if (url.pathname === '/style.css') response = new Response(style, { headers: { 'Content-Type': 'text/css; charset=utf-8' } });
       else if (url.pathname === '/app.js') response = new Response(client, { headers: { 'Content-Type': 'text/javascript; charset=utf-8' } });

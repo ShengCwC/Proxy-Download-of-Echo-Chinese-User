@@ -11,3 +11,5 @@
 node_modules/
 dist/
 coverage/
+.edgeone/
+__pycache__/

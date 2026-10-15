@@ -82,3 +82,15 @@ test('HTML, branding, HEAD and health never fetch upstream or leak configuration
   assert.ok(!health.includes(secret)); assert.ok(!health.includes('origin.test'));
   assert.equal((await handle(new Request('http://dl.echo.screenshare.cn/'))).status, 308);
 });
+
+test('encoded Makers ranges preserve non-UTF8 bytes and reject malformed length', async () => {
+  let bad = false;
+  const handle = createHandler({ ...config, fetcher: async () => {
+    return Response.json({ status: 206, headers: { 'Content-Type': 'application/octet-stream', 'Content-Range': 'bytes 0-31/99', ETag: '"current"' }, bytes: Buffer.from(bytes.slice(0, bad ? 30 : 32)).toString('base64') }, { headers: { 'X-Echo-Origin-Encoding': 'base64' } });
+  } });
+  assert.equal((await handle(post('/api/prepare', { url: signed() }))).status, 200);
+  bad = true;
+  const response = await handle(post('/api/prepare', { url: signed() }));
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, 'INVALID_FILE_RESPONSE');
+});

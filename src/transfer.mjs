@@ -18,8 +18,8 @@ export async function downloadVerified({ url, size, sha256, etag, sourceUrl, sig
         const error = await response.json();
         throw new Error(['VERSION_CHANGED', 'LINK_EXPIRED', 'UPSTREAM_DENIED', 'CF_CHALLENGE', 'ORIGIN_BUSY'].includes(error.code) ? error.code : 'DOWNLOAD_FAILED');
       }
-      if (live && response.headers.get('etag') !== etag) { await response.body?.cancel(); throw new Error('VERSION_CHANGED'); }
       if (response.status !== 206 || response.headers.get('content-range') !== `bytes ${start}-${end}/${size}` || !response.body) { await response.body?.cancel(); throw new Error('INVALID_RANGE_RESPONSE'); }
+      if (live && response.headers.get('etag') !== etag) { await response.body?.cancel(); throw new Error('VERSION_CHANGED'); }
       const reader = response.body.getReader();
       let offset = start;
       try {

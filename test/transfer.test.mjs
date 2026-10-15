@@ -27,3 +27,7 @@ test('parallel transfer rejects invalid manifests and observes cancellation', as
   const controller = new AbortController(); controller.abort();
   await assert.rejects(downloadVerified({ ...options, signal: controller.signal, fetcher: async (_, init) => { init.signal.throwIfAborted(); } }));
 });
+
+test('a gateway HTML error is not reported as an official version update', async () => {
+  await assert.rejects(downloadVerified({ url: 'https://proxy.test/api/chunk', sourceUrl: 'https://builds.echo.ac/echo.exe?test', size: 32, etag: '"current"', fetcher: async () => new Response('<h1>Timeout</h1>', { status: 504 }) }), /INVALID_RANGE_RESPONSE/);
+});

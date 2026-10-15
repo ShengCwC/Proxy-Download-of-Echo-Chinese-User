@@ -17,8 +17,14 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: python -m unittest discover -s test -p '*_test.py'
       - uses: actions/upload-artifact@v4
         with:
           name: echo-edgeone-function
-          path: dist/edgeone.js
+          path: |
+            dist/edgeone.js
+            dist/relay.js
           retention-days: 14

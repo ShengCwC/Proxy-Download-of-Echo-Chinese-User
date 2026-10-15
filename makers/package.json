@@ -1,0 +1,1 @@
+{"name":"echo-live-origin","private":true,"type":"module","scripts":{"build":"node build.mjs"}}
