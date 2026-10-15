@@ -58,7 +58,8 @@ async function prepare(input, imported = false) {
     const result = await response.json();
     if (!response.ok) {
       status(result.message || '暂时无法获取下载地址，请稍后重试。', 'error');
-      if (result.code === 'CF_CHALLENGE' || result.code === 'DOWNLOAD_NOT_FOUND') $('assist').open = true;
+      if (result.code === 'CF_CHALLENGE') $('assist').open = result.stage !== 'file';
+      if (result.code === 'DOWNLOAD_NOT_FOUND') $('assist').open = true;
       return;
     }
     if (result.entry) setEntry(result.entry);

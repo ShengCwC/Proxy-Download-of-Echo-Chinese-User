@@ -2,7 +2,7 @@ import { DownloadError, parseEntry, parseSigned, resolveEntry, encodeTicket, dec
 import { page, style, icon } from './page.mjs';
 import client from './client.js?raw';
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.2';
 const SECURITY = {
   'Cache-Control': 'private, no-store, max-age=0',
   'CDN-Cache-Control': 'no-store',
@@ -34,6 +34,10 @@ function errorPage(error, entry) {
 export function createHandler({ fetcher = fetch, now = () => Date.now() } = {}) {
   return async function handle(request) {
     const url = new URL(request.url);
+    if (url.hostname === 'dl.echo.screenshare.cn' && url.protocol === 'http:') {
+      url.protocol = 'https:';
+      return secure(new Response(null, { status: 308, headers: { Location: url.href } }));
+    }
     let entry;
     let response;
     try {
@@ -59,6 +63,11 @@ export function createHandler({ fetcher = fetch, now = () => Date.now() } = {}) 
         } else {
           entry = input.entry ? parseEntry(input.entry) : undefined;
           result = { ...parseSigned(input.url.trim(), now(), 5000), ...(entry ? { entry } : {}) };
+          // Check the real origin before announcing readiness. A signed-looking
+          // URL alone cannot establish either authorization or reachability.
+          const probe = await downloadFile(result, new Request(request.url, { method: 'HEAD' }), { fetcher, now: now(), signal: request.signal });
+          if (probe.status !== 200) throw new DownloadError('FILE_UNAVAILABLE', 'Echo 暂时无法提供该文件，请使用官方直连。', 502, 'file');
+          parseSigned(result.url, now(), 5000);
         }
         response = json({ filename: result.filename, expiresAt: result.expiresAt, entry: result.entry, download: '/download/' + encodeTicket({ url: result.url, ...(result.entry ? { entry: result.entry } : {}) }) });
       } else if (url.pathname.startsWith('/download/')) {

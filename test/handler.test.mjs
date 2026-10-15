@@ -25,12 +25,27 @@ test('import never treats syntax or timestamps as authorization: origin rejects 
   let calls = 0;
   const handle = createHandler({ now: () => NOW, fetcher: async () => { calls++; return new Response('denied', { status: 403 }); } });
   const imported = await handle(post('/api/import', { url: signed() }));
-  assert.equal(calls, 0);
-  const result = await imported.json();
-  const response = await handle(new Request('https://proxy.test' + result.download));
+  assert.equal(imported.status, 403);
+  assert.equal((await imported.json()).code, 'UPSTREAM_DENIED');
+  assert.equal(calls, 1);
+  const response = await handle(new Request('https://proxy.test/download/' + encodeTicket({ url: signed() })));
   assert.equal(response.status, 403);
   assert.equal(response.headers.get('content-disposition'), null);
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
+});
+test('import probes the file and detects file challenges before showing a download button', async () => {
+  const handle = createHandler({ now: () => NOW, fetcher: async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }) });
+  const response = await handle(post('/api/import', { url: signed() }));
+  assert.equal(response.status, 503);
+  const result = await response.json();
+  assert.equal(result.stage, 'file'); assert.equal(result.download, undefined);
+});
+test('production HTTP redirects to HTTPS while local development stays available', async () => {
+  const handle = createHandler();
+  const response = await handle(new Request('http://dl.echo.screenshare.cn/example-token'));
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get('location'), 'https://dl.echo.screenshare.cn/example-token');
+  assert.equal((await handle(new Request('http://127.0.0.1:4173/'))).status, 200);
 });
 test('challenge returns actionable JSON; file challenge returns an HTML recovery page', async () => {
   const handle = createHandler({ now: () => NOW, fetcher: async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }) });

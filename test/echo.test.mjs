@@ -111,5 +111,15 @@ test('stream cancellation reaches upstream without buffering the installer', asy
   const response = await downloadFile({ url: signed() }, new Request('https://proxy.test/file'), { now: NOW, fetcher: async () => new Response(body, { headers: { 'content-type': 'application/octet-stream' } }) });
   assert.ok(pulled < 10);
   await response.body.cancel();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(canceled, true);
+});
+
+test('EdgeOne ArrayBuffer, sliced views, and string chunks retain their bytes', async () => {
+  const chunks = [new TextEncoder().encode('{"url":').buffer, '"test', new DataView(Uint8Array.from([0, 34, 125, 0]).buffer, 1, 2)];
+  const response = new Response(new ReadableStream({ pull(c) { chunks.length ? c.enqueue(chunks.shift()) : c.close(); } }));
+  assert.equal(await readLimited(response), '{"url":"test"}');
+  const source = new Response(new ReadableStream({ start(c) { c.enqueue(Uint8Array.from([77, 90, 1, 2]).buffer); c.close(); } }), { headers: { 'content-type': 'application/octet-stream' } });
+  const result = await downloadFile({ url: signed() }, new Request('https://proxy.test/file'), { now: NOW, fetcher: async () => source });
+  assert.deepEqual([...new Uint8Array(await result.arrayBuffer())], [77, 90, 1, 2]);
 });

@@ -128,16 +128,7 @@ export async function fetchUpstream(url, options, fetcher = fetch, signal) {
     if (!response.body) { signal?.removeEventListener('abort', abort); return response; }
     const reader = response.body.getReader();
     const clean = () => signal?.removeEventListener('abort', abort);
-    return new Response(new ReadableStream({
-      async pull(out) {
-        try {
-          const chunk = await readChunk(reader);
-          if (chunk.done) { clean(); reader.releaseLock(); out.close(); }
-          else out.enqueue(chunk.value);
-        } catch (error) { clean(); out.error(error); }
-      },
-      async cancel(reason) { clean(); await reader.cancel(reason); },
-    }), { status: response.status, headers: response.headers });
+    return new Response(streamReader(reader, [], clean), { status: response.status, headers: response.headers });
   } catch (error) {
     signal?.removeEventListener('abort', abort);
     if (signal?.aborted) throw error;
@@ -148,11 +139,49 @@ export async function fetchUpstream(url, options, fetcher = fetch, signal) {
 async function readChunk(reader) {
   let timer;
   try {
-    return await Promise.race([
+    const chunk = await Promise.race([
       reader.read(),
       new Promise((_, reject) => { timer = setTimeout(() => { reader.cancel().catch(() => {}); reject(new DownloadError('UPSTREAM_TIMEOUT', 'Echo 传输超时，请重新下载。', 504, 'file')); }, 120000); }),
     ]);
+    if (chunk.done) return chunk;
+    // EdgeOne returns ArrayBuffer/string chunks as well as typed arrays.
+    const value = chunk.value;
+    if (typeof value === 'string') return { done: false, value: new TextEncoder().encode(value) };
+    if (value instanceof ArrayBuffer) return { done: false, value: new Uint8Array(value) };
+    if (ArrayBuffer.isView(value)) return { done: false, value: new Uint8Array(value.buffer, value.byteOffset, value.byteLength) };
+    throw new DownloadError('INVALID_CHUNK', '上游返回了不支持的数据格式。', 502, 'file');
   } finally { clearTimeout(timer); }
+}
+
+function streamReader(reader, prefix = [], cleanup = () => {}) {
+  // EdgeOne does not implement the ReadableStream constructor or custom
+  // TransformStream transformers. An identity stream preserves backpressure.
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  let finished = false;
+  writer.closed.catch(async reason => {
+    if (!finished) await reader.cancel(reason).catch(() => {});
+  });
+  void (async () => {
+    try {
+      for (const bytes of prefix) await writer.write(bytes);
+      while (true) {
+        const chunk = await readChunk(reader);
+        if (chunk.done) break;
+        await writer.write(chunk.value);
+      }
+      await writer.close();
+    } catch (error) {
+      await reader.cancel(error).catch(() => {});
+      await writer.abort(error).catch(() => {});
+    } finally {
+      finished = true;
+      cleanup();
+      reader.releaseLock();
+      writer.releaseLock();
+    }
+  })();
+  return readable;
 }
 
 export async function resolveEntry(input, { fetcher = fetch, now = Date.now(), signal } = {}) {
@@ -273,17 +302,7 @@ export async function downloadFile(data, request, { fetcher = fetch, now = Date.
     if (first !== 77 || (!requestedOneByte && second !== 90)) {
       await reader.cancel(); fail('NOT_A_FILE', '返回内容不是有效的 Windows 程序，已停止下载。', 502, 'file');
     }
-    body = new ReadableStream({
-      async pull(controller) {
-        try {
-          if (prefix.length) { controller.enqueue(prefix.shift()); return; }
-          const part = await readChunk(reader);
-          if (part.done) { controller.close(); reader.releaseLock(); }
-          else controller.enqueue(part.value);
-        } catch (error) { controller.error(error); }
-      },
-      async cancel(reason) { await reader.cancel(reason); },
-    });
+    body = streamReader(reader, prefix);
   }
   return new Response(body, { status: response.status, headers: out });
 }

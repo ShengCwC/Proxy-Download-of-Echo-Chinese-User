@@ -2,11 +2,23 @@
 
 为 `https://dl.echo.screenshare.cn` 编写的 EdgeOne 下载网关。接收 Echo 原始下载链接，解析官方短期签名地址，通过边缘函数流式转发原始安装程序。
 
+## 当前上线状态（2026-10-15）
+
+- 正式入口：https://dl.echo.screenshare.cn ，DNS、有效 HTTPS 证书、专用域名触发规则已生效。
+- **实际加速仍被 Echo 官方验证阻断，不能视为可用的下载加速成品。** 本次 EdgeOne 真实请求在入口和文件服务两个阶段均遇到 Cloudflare 验证；浏览器取得的新鲜签名链接也未能让边缘节点取到文件。
+- 另外验证过 Cloudflare Worker 普通回源，同样受阻；临时测试 Worker 已删除，没有增加生产依赖。
+- 页面明确提示当前不可用，并提供官方直连。没有成功通过本服务下载完整安装包，因此没有本站加速速度或大陆节点测速结论。
+- 网关版本 `1.0.2`；23 项自动测试通过，包括 EdgeOne 的 ArrayBuffer 数据块、流式背压及取消、官方鉴权、浏览器辅助入口和 HTTPS 跳转。
+
+解除阻断需要 Echo 提供允许服务器回源的下载接口，或给出针对本服务的验证豁免/受信任回源方案；签名校验应继续保留。不要把共享浏览器 Cookie、自动解验证码或取消官方鉴权当作生产方案。
+
+取得官方支持后，先运行真实完整下载，核对官方原文件的大小、SHA-256 和数字签名，并测试不同入口与分段请求；全部通过后再移除 `src/page.mjs` 中的“加速线路暂不可用”通知。
+
 ## 使用
 
 - 打开首页，粘贴 `https://dl.echo.ac/<链接标识>`。
 - 也可直接将原始链接的域名改为 `dl.echo.screenshare.cn`，保留路径。
-- 获取地址后点击下载。完整保留 Echo 指定的文件名。
+- 获取地址后点击下载。完整保留 Echo 指定的文件名；当前线路限制见上方状态。
 - 如果入口要求 Cloudflare 验证，打开 Echo 官方页面完成验证，复制 `click here` 按钮的链接，粘贴到“临时文件地址”。也可使用页面提供的取链书签。
 - 如果**文件服务**同样要求浏览器验证，网关明确提示并提供官方直连，不把验证页保存成 `.exe`。
 
@@ -68,6 +80,8 @@ npm run build
 - 支持单段 Range、If-Range、206 和 416。HEAD 以 GET `bytes=0-0` 向源站查询，避免将 GET 签名误用于 HEAD。
 - 未开始输出的完整下载遇到过期/拒绝时，可以重新解析原入口一次。分段下载不自动换新文件，避免不同版本拼接。
 - 采用背压流式传输；用户取消时取消上游读取。25 秒响应头超时、120 秒读取空闲超时；不将整个安装包读入内存。
+- 兼容 EdgeOne 的 ArrayBuffer、ArrayBufferView 和字符串流块；用无自定义 transformer 的 TransformStream 构造输出流，避免依赖 EdgeOne 不支持的 ReadableStream 构造函数。
+- 导入的签名地址会先通过实际 GET 小范围请求检查上游鉴权与可达性；每次真正下载仍重新请求官方，不把预检查当作可复用授权。
 - 原始下载文件名必须保留；不改写安装包字节，不提供未经更新校验的长期镜像。
 
 未来若增加跨用户文件缓存，需要先落实可验证的授权入口、版本键、逐请求文件名、过期语义及缓存前鉴权，不能只删除 `X-Amz-*` 参数合并缓存。
@@ -94,4 +108,4 @@ npm run build
 
 `npm run smoke` 检查生产健康端点。设置环境变量 `ECHO_TEST_ENTRY` 后还会实际下载文件到被 Git 忽略的 `.local/verified-download.exe`，输出长度和 SHA-256；可用 `EXPECTED_SHA256` 指定独立取得的官方文件哈希。`BASE_URL` 可覆盖测试站点。脚本不会输出原始链接、文件名或临时签名。
 
-参考：[EdgeOne Fetch](https://cloud.tencent.com/document/product/1552/81897)、[EdgeOne Range GETs](https://edgeone.ai/document/46966)、[AWS 签名地址](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)、[Echo API](https://developer.echo.ac/register/)。
+参考：[EdgeOne Fetch](https://cloud.tencent.com/document/product/1552/81897)、[EdgeOne Range GETs](https://edgeone.ai/document/46966)、[EdgeOne ReadableStream](https://cloud.tencent.com/document/product/1552/81914)、[EdgeOne 流数据块](https://cloud.tencent.com/document/product/1552/81924)、[AWS 签名地址](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)、[Echo API](https://developer.echo.ac/register/)。
