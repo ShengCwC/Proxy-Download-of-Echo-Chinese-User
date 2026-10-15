@@ -1,0 +1,52 @@
+name: Live browser origin validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/live-origin-probe]
+    paths:
+      - .github/workflows/origin-probe.yml
+      - origin/**
+      - src/**
+      - test/**
+      - scripts/test-live-origin.mjs
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    env:
+      ECHO_PROBE_URL: ${{ secrets.ECHO_PROBE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm ci --prefix origin --ignore-scripts
+      - run: npm test
+      - run: xvfb-run --auto-servernum node scripts/test-live-origin.mjs
+        if: env.ECHO_PROBE_URL != ''
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: origin-browser-probe
+          path: .local/live-origin-test/
+          retention-days: 2
+          if-no-files-found: ignore
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 -f origin/Dockerfile -t echo-live-origin:test .
+      - name: Test container initialization
+        run: |
+          KEY=$(openssl rand -hex 32)
+          echo "::add-mask::$KEY"
+          docker run -d --name echo-test -p 9000:9000 -e ECHO_ORIGIN_KEY="$KEY" echo-live-origin:test
+          for i in $(seq 1 20); do
+            if curl --fail --silent -H "Authorization: Bearer $KEY" http://127.0.0.1:9000/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs echo-test
+          exit 1

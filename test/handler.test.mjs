@@ -1,94 +1,96 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bundle } from '../scripts/build.mjs';
-import { encodeTicket } from '../src/echo.mjs';
+import { inspectRange, validateRead, CHUNK_SIZE } from '../src/live-protocol.mjs';
+import { downloadVerified } from '../src/transfer.mjs';
 await bundle();
 const { createHandler } = await import('../dist/handler.mjs');
 const NOW = Date.UTC(2026, 9, 15, 6, 0);
+const secret = 'b'.repeat(64);
 function signed(date = '20261015T060000Z') {
   return 'https://builds.echo.ac/echo.exe?' + new URLSearchParams({ 'X-Amz-Algorithm': 'AWS4-HMAC-SHA256', 'X-Amz-Credential': 'test', 'X-Amz-Date': date, 'X-Amz-Expires': '120', 'X-Amz-SignedHeaders': 'host', 'X-Amz-Signature': 'a'.repeat(64), 'response-content-disposition': 'attachment; filename="echo-test.exe"' });
 }
 const post = (path, body, headers = {}) => new Request('https://proxy.test' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-
-test('resolve and download form a complete byte-preserving flow with no shared cache', async () => {
-  const handle = createHandler({ now: () => NOW, fetcher: async url => url.startsWith('https://dl.echo.ac/') ? new Response(`<a id="dlURL" href="${signed()}">click</a>`, { headers: { 'content-type': 'text/html' } }) : new Response(Uint8Array.from([77, 90, 0, 255]), { headers: { 'content-type': 'application/octet-stream', 'content-length': '4' } }) });
-  const resolved = await handle(post('/api/resolve', { url: 'https://dl.echo.ac/example-token' }));
-  assert.equal(resolved.status, 200);
-  const result = await resolved.json();
-  const file = await handle(new Request('https://proxy.test' + result.download));
-  assert.equal(file.status, 200);
-  assert.match(file.headers.get('cache-control'), /no-store/);
-  assert.equal(file.headers.get('cdn-cache-control'), 'no-store');
-  assert.deepEqual([...new Uint8Array(await file.arrayBuffer())], [77, 90, 0, 255]);
-});
-test('import never treats syntax or timestamps as authorization: origin rejects forged signature', async () => {
+const bytes = Uint8Array.from({ length: 99 }, (_, i) => i === 0 ? 77 : i === 1 ? 90 : i);
+function fixture(etag = '"current"') {
+  return async (url, init) => {
+    assert.equal(url, 'https://origin.test/read');
+    assert.equal(init.headers.Authorization, `Bearer ${secret}`);
+    const { start, end } = JSON.parse(init.body);
+    return new Response(bytes.slice(start, end + 1), { status: 206, headers: { 'Content-Type': 'application/octet-stream', 'Content-Range': `bytes ${start}-${end}/${bytes.length}`, ETag: etag } });
+  };
+}
+const config = { now: () => NOW, originUrl: 'https://origin.test', originKey: secret };
+test('each submission contacts the live origin; full transfer preserves current bytes and filename', async () => {
   let calls = 0;
-  const handle = createHandler({ now: () => NOW, fetcher: async () => { calls++; return new Response('denied', { status: 403 }); } });
-  const imported = await handle(post('/api/import', { url: signed() }));
-  assert.equal(imported.status, 403);
-  assert.equal((await imported.json()).code, 'UPSTREAM_DENIED');
-  assert.equal(calls, 1);
-  const response = await handle(new Request('https://proxy.test/download/' + encodeTicket({ url: signed() })));
-  assert.equal(response.status, 403);
-  assert.equal(response.headers.get('content-disposition'), null);
-  assert.equal(calls, 2);
+  const handle = createHandler({ ...config, fetcher: (...args) => { calls++; return fixture()(...args); } });
+  const first = await handle(post('/api/prepare', { url: signed() }));
+  assert.equal(first.status, 200); assert.match(first.headers.get('cache-control'), /no-store/);
+  const info = await first.json();
+  assert.equal(info.delivery, 'live'); assert.equal(info.filename, 'echo-test.exe'); assert.equal(info.etag, '"current"');
+  await handle(post('/api/prepare', { url: signed() })); assert.equal(calls, 2);
+  let digest;
+  const blob = await downloadVerified({ url: 'https://proxy.test/api/chunk', sourceUrl: signed(), etag: info.etag, size: info.size, chunkSize: 32, fetcher: (url, init) => handle(new Request(url, init)), onDigest: value => { digest = value; } });
+  assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), bytes); assert.match(digest, /^[a-f0-9]{64}$/);
 });
-test('import probes the file and detects file challenges before showing a download button', async () => {
-  const handle = createHandler({ now: () => NOW, fetcher: async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }) });
-  const response = await handle(post('/api/import', { url: signed() }));
-  assert.equal(response.status, 503);
-  const result = await response.json();
-  assert.equal(result.stage, 'file'); assert.equal(result.download, undefined);
-});
-test('production HTTP redirects to HTTPS while local development stays available', async () => {
-  const handle = createHandler();
-  const response = await handle(new Request('http://dl.echo.screenshare.cn/example-token'));
-  assert.equal(response.status, 308);
-  assert.equal(response.headers.get('location'), 'https://dl.echo.screenshare.cn/example-token');
-  assert.equal((await handle(new Request('http://127.0.0.1:4173/'))).status, 200);
-});
-test('challenge returns actionable JSON; file challenge returns an HTML recovery page', async () => {
-  const handle = createHandler({ now: () => NOW, fetcher: async () => new Response('challenge', { status: 403, headers: { 'cf-mitigated': 'challenge' } }) });
-  const response = await handle(post('/api/resolve', { url: 'https://dl.echo.ac/example-token' }));
-  assert.equal(response.status, 503); assert.equal((await response.json()).code, 'CF_CHALLENGE');
-  const file = await handle(new Request('https://proxy.test/download/' + encodeTicket({ url: signed(), entry: 'https://dl.echo.ac/example-token' })));
-  assert.equal(file.status, 503);
-  assert.equal(file.headers.get('content-disposition'), null);
-  assert.match(await file.text(), /官方直连下载/);
-});
-test('expired full requests refresh once; expired ranges do not silently combine versions', async () => {
-  let calls = 0;
-  const handle = createHandler({ now: () => NOW, fetcher: async url => { calls++; return url.startsWith('https://dl.echo.ac/') ? new Response(`<a id="dlURL" href="${signed()}">click</a>`, { headers: { 'content-type': 'text/html' } }) : new Response(Uint8Array.from([77, 90]), { headers: { 'content-type': 'application/octet-stream' } }); } });
-  const url = 'https://proxy.test/download/' + encodeTicket({ url: signed('20261015T050000Z'), entry: 'https://dl.echo.ac/example-token' });
-  const full = await handle(new Request(url));
-  assert.equal(full.status, 200); await full.arrayBuffer(); assert.equal(calls, 2);
-  calls = 0;
-  const partial = await handle(new Request(url, { headers: { range: 'bytes=1-' } }));
-  assert.equal(partial.status, 410); assert.equal(calls, 0);
-});
-test('API refuses cross-site submissions, bad content types, and oversized bodies', async () => {
-  const handle = createHandler({ fetcher: async () => { throw new Error('must not fetch'); } });
-  assert.equal((await handle(post('/api/import', { url: signed() }, { Origin: 'https://evil.test' }))).status, 403);
-  assert.equal((await handle(post('/api/import', { url: signed() }, { 'Content-Type': 'text/plain' }))).status, 415);
-  assert.equal((await handle(post('/api/import', { url: 'x'.repeat(10000) }))).status, 400);
-});
-test('HTML, assets and HEAD are available without upstream access', async () => {
-  const handle = createHandler({ fetcher: async () => { throw new Error('must not fetch'); } });
-  for (const path of ['/', '/example-token', '/app.js', '/style.css', '/icon.svg', '/health']) {
-    const response = await handle(new Request('https://proxy.test' + path));
-    assert.equal(response.status, 200); assert.ok(response.headers.has('content-security-policy'));
+test('changed versions, forged signatures and CF challenges never fall back to a snapshot', async () => {
+  const input = { url: signed(), start: 0, end: 31, etag: '"previous"', size: bytes.length };
+  let handle = createHandler({ ...config, fetcher: fixture() });
+  assert.equal((await handle(post('/api/chunk', input))).status, 409);
+  for (const [code, status] of [['CF_CHALLENGE', 503], ['UPSTREAM_DENIED', 410]]) {
+    handle = createHandler({ ...config, fetcher: async () => new Response(JSON.stringify({ code }), { status }) });
+    const failed = await handle(post('/api/prepare', { url: signed() }));
+    assert.equal(failed.status, status); assert.equal((await failed.json()).code, code);
   }
-  const head = await handle(new Request('https://proxy.test/', { method: 'HEAD' }));
-  assert.equal(await head.text(), '');
+  assert.equal((await handle(post('/api/mirror', { url: signed() }))).status, 410);
+  assert.equal((await handle(new Request('https://proxy.test/mirror/old/file.exe'))).status, 410);
+});
+test('expired addresses and unsafe targets do not reach the browser origin', async () => {
+  const handle = createHandler({ ...config, fetcher: async () => { throw new Error('must not fetch'); } });
+  assert.equal((await handle(post('/api/prepare', { url: signed('20261015T050000Z') }))).status, 410);
+  assert.equal((await handle(post('/api/prepare', { url: signed().replace('builds.echo.ac', 'evil.test') }))).status, 400);
+  assert.equal((await handle(post('/api/prepare', { url: 'https://dl.echo.ac/example-token' }))).status, 400);
+  assert.equal((await handle(post('/api/chunk', { url: signed(), start: 0, end: 31 }))).status, 400);
+});
+test('API refuses cross-site submissions, malformed bodies, excess ranges and unpinned requests', async () => {
+  const handle = createHandler(config);
+  assert.equal((await handle(post('/api/prepare', {}, { origin: 'https://evil.test' }))).status, 403);
+  assert.equal((await handle(post('/api/prepare', {}, { 'Content-Type': 'text/plain' }))).status, 415);
+  assert.equal((await handle(post('/api/prepare', { url: 'a'.repeat(9000) }))).status, 400);
+  assert.throws(() => validateRead({ url: signed(), start: 0, end: CHUNK_SIZE }, NOW), /分段范围/);
+  assert.throws(() => validateRead({ url: signed(), start: 1, end: 31 }, NOW), /官方当前版本/);
+  assert.throws(() => validateRead({ url: signed(), start: 0, end: 31, size: 99, etag: 'W/"weak"' }, NOW), /版本信息/);
+});
+test('upstream protocol rejects HTML, ignored Range and different file lengths', () => {
+  const input = validateRead({ url: signed(), start: 0, end: 31, size: 99, etag: '"current"' }, NOW);
+  const headers = { 'content-type': 'application/octet-stream', 'content-range': 'bytes 0-31/99', etag: '"current"' };
+  assert.equal(inspectRange(206, headers, input).size, 99);
+  assert.throws(() => inspectRange(200, headers, input));
+  assert.throws(() => inspectRange(206, { ...headers, 'content-type': 'text/html' }, input));
+  assert.throws(() => inspectRange(206, { ...headers, 'content-range': 'bytes 0-31/100' }, input), /官方文件已更新/);
+  assert.throws(() => inspectRange(412, headers, input), /官方文件已更新/);
+});
+test('HTML, branding, HEAD and health never fetch upstream or leak configuration', async () => {
+  const handle = createHandler({ ...config, fetcher: async () => { throw new Error('must not fetch'); } });
+  for (const path of ['/', '/app.js', '/style.css', '/assets/logo-light.png', '/health']) {
+    const response = await handle(new Request('https://proxy.test' + path)); assert.equal(response.status, 200);
+    assert.equal((await handle(new Request('https://proxy.test' + path, { method: 'HEAD' }))).body, null);
+  }
+  const html = await (await handle(new Request('https://proxy.test/'))).text();
+  assert.ok(html.includes('实时加速下载')); assert.ok(!html.includes('generic-download'));
+  const health = await (await handle(new Request('https://proxy.test/health'))).text();
+  assert.ok(!health.includes(secret)); assert.ok(!health.includes('origin.test'));
+  assert.equal((await handle(new Request('http://dl.echo.screenshare.cn/'))).status, 308);
 });
 
-test('mirror import uses expired official URL only as filename metadata without contacting blocked origin', async () => {
-  const handle = createHandler({ now: () => NOW, fetcher: async () => { throw new Error('must not contact Echo'); } });
-  const response = await handle(post('/api/mirror', { url: signed('20261015T050000Z') }));
-  assert.equal(response.status, 200);
-  const result = await response.json();
-  assert.equal(result.delivery, 'mirror'); assert.equal(result.expiresAt, null);
-  assert.equal(result.filename, 'echo-test.exe'); assert.match(result.download, /^\/mirror\/[a-f0-9]{64}\/echo-test.exe$/);
-  assert.equal((await handle(post('/api/mirror', { url: signed().replace('builds.echo.ac', 'evil.test') }))).status, 400);
-  assert.equal((await handle(new Request('https://proxy.test/mirror/' + '0'.repeat(64) + '/echo.exe'))).status, 404);
+test('encoded Makers ranges preserve non-UTF8 bytes and reject malformed length', async () => {
+  let bad = false;
+  const handle = createHandler({ ...config, fetcher: async () => {
+    return Response.json({ status: 206, headers: { 'Content-Type': 'application/octet-stream', 'Content-Range': 'bytes 0-31/99', ETag: '"current"' }, bytes: Buffer.from(bytes.slice(0, bad ? 30 : 32)).toString('base64') }, { headers: { 'X-Echo-Origin-Encoding': 'base64' } });
+  } });
+  assert.equal((await handle(post('/api/prepare', { url: signed() }))).status, 200);
+  bad = true;
+  const response = await handle(post('/api/prepare', { url: signed() }));
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).code, 'INVALID_FILE_RESPONSE');
 });

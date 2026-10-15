@@ -1,5 +1,7 @@
-export async function downloadVerified({ url, size, sha256, signal, onProgress = () => {}, fetcher = fetch, chunkSize = 4 * 1024 * 1024, concurrency = 6 }) {
-  if (!Number.isSafeInteger(size) || size < 2 || size > 200 * 1024 * 1024 || !/^[a-f0-9]{64}$/.test(sha256)) throw new Error('INVALID_MANIFEST');
+export async function downloadVerified({ url, size, sha256, etag, sourceUrl, signal, onProgress = () => {}, onDigest = () => {}, fetcher = fetch, chunkSize = 4 * 1024 * 1024, concurrency = 4 }) {
+  const live = typeof sourceUrl === 'string';
+  if (!Number.isSafeInteger(size) || size < 2 || size > 200 * 1024 * 1024 || (live ? !/^"[\x21\x23-\x7e]{1,200}"$/.test(etag || '') : !/^[a-f0-9]{64}$/.test(sha256))) throw new Error('INVALID_MANIFEST');
+  if (!Number.isSafeInteger(chunkSize) || chunkSize < 1 || chunkSize > 4 * 1024 * 1024 || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 6) throw new Error('INVALID_MANIFEST');
   const controller = new AbortController();
   const abort = () => controller.abort(signal?.reason);
   if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, { once: true });
@@ -11,8 +13,13 @@ export async function downloadVerified({ url, size, sha256, signal, onProgress =
     while (next * chunkSize < size) {
       const start = next++ * chunkSize;
       const end = Math.min(size - 1, start + chunkSize - 1);
-      const response = await fetcher(url, { headers: { Range: `bytes=${start}-${end}` }, signal: controller.signal, cache: 'no-store' });
+      const response = await fetcher(url, { ...(live ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: sourceUrl, etag, size, start, end }) } : { headers: { Range: `bytes=${start}-${end}` } }), signal: controller.signal, cache: 'no-store' });
+      if (live && response.status !== 206 && response.headers.get('content-type')?.startsWith('application/json')) {
+        const error = await response.json();
+        throw new Error(['VERSION_CHANGED', 'LINK_EXPIRED', 'UPSTREAM_DENIED', 'CF_CHALLENGE', 'ORIGIN_BUSY'].includes(error.code) ? error.code : 'DOWNLOAD_FAILED');
+      }
       if (response.status !== 206 || response.headers.get('content-range') !== `bytes ${start}-${end}/${size}` || !response.body) { await response.body?.cancel(); throw new Error('INVALID_RANGE_RESPONSE'); }
+      if (live && response.headers.get('etag') !== etag) { await response.body?.cancel(); throw new Error('VERSION_CHANGED'); }
       const reader = response.body.getReader();
       let offset = start;
       try {
@@ -34,7 +41,9 @@ export async function downloadVerified({ url, size, sha256, signal, onProgress =
     onProgress(size, size, 'verifying');
     const actual = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', output)), b => b.toString(16).padStart(2, '0')).join('');
     if (controller.signal.aborted) throw new Error('CANCELLED');
-    if (actual !== sha256) throw new Error('HASH_MISMATCH');
+    if (sha256 && actual !== sha256) throw new Error('HASH_MISMATCH');
+    if (live && (output[0] !== 77 || output[1] !== 90)) throw new Error('INVALID_FILE_RESPONSE');
+    onDigest(actual);
     return new Blob([output], { type: 'application/octet-stream' });
   } catch (error) { controller.abort(); throw error; }
   finally { clearTimeout(deadline); signal?.removeEventListener('abort', abort); }

@@ -1,6 +1,7 @@
 import { build } from 'esbuild';
 import { readFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 export const rawPlugin = {
   name: 'raw-source',
@@ -16,6 +17,7 @@ export async function bundle() {
   await build({ ...common, entryPoints: ['src/edgeone.mjs'], outfile: 'dist/edgeone.js', format: 'iife' });
   await build({ ...common, entryPoints: ['src/worker.mjs'], outfile: 'dist/worker.mjs', format: 'esm' });
   await build({ ...common, entryPoints: ['src/handler.mjs'], outfile: 'dist/handler.mjs', format: 'esm' });
+  await build({ ...common, entryPoints: ['src/relay.mjs'], outfile: 'dist/relay.js', format: 'iife' });
 }
 
-if (process.argv[1]?.endsWith('build.mjs')) { await bundle(); console.log('Built EdgeOne edge function and local runtime.'); }
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) { await bundle(); console.log('Built EdgeOne edge function and local runtime.'); }
