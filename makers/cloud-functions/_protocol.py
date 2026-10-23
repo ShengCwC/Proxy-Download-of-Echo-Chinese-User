@@ -15,6 +15,15 @@ class DownloadError(Exception):
         self.code, self.status = code, status
 
 
+def validate_entry(url):
+    if not isinstance(url, str) or len(url) > 512:
+        raise DownloadError('INVALID_LINK')
+    target = urlsplit(url)
+    if target.scheme != 'https' or target.netloc != 'dl.echo.ac' or target.query or target.fragment or not re.fullmatch(r'/[A-Za-z0-9_-]{6,128}={0,2}', target.path):
+        raise DownloadError('INVALID_LINK')
+    return url
+
+
 def validate(data, now=None):
     now = time.time() if now is None else now
     if not isinstance(data, dict):

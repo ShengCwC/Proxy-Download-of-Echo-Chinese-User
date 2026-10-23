@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'makers' / 'cloud-functions'))
-from _protocol import validate, inspect, DownloadError
+from _protocol import validate, validate_entry, inspect, DownloadError
 
 NOW = 1792051200  # 2026-10-15 08:00:00 UTC
 
@@ -18,6 +18,12 @@ def source():
 
 
 class OriginContract(unittest.TestCase):
+    def test_entry_targets_are_only_exact_official_download_links(self):
+        self.assertEqual(validate_entry('https://dl.echo.ac/example-token'), 'https://dl.echo.ac/example-token')
+        for url in ['http://dl.echo.ac/example-token', 'https://dl.echo.ac.evil.test/example-token', 'https://dl.echo.ac@127.0.0.1/example-token', 'https://dl.echo.ac/a', 'https://dl.echo.ac/example-token?next=evil', 'https://dl.echo.ac/example-token/extra', 'https://builds.echo.ac/echo.exe']:
+            with self.subTest(url=url), self.assertRaises(DownloadError):
+                validate_entry(url)
+
     def test_only_fresh_official_signed_targets_and_bounded_ranges(self):
         data = {'url': source(), 'start': 0, 'end': 31}
         self.assertEqual(validate(data, NOW)['url'], source())

@@ -1,4 +1,4 @@
-import { DownloadError, parseSigned, readLimited } from './echo.mjs';
+import { DownloadError, parseEntry, parseSigned, readLimited } from './echo.mjs';
 import { validateRead, inspectRange, liveError } from './live-protocol.mjs';
 import { page, style } from './site.mjs';
 import logo from '../public/assets/logo-light.png';
@@ -6,7 +6,7 @@ import favicon from '../public/assets/favicon-light.png';
 import client from './client.js?raw';
 import transfer from './transfer.mjs?raw';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const SECURITY = {
   'Cache-Control': 'private, no-store, max-age=0', 'CDN-Cache-Control': 'no-store', 'Surrogate-Control': 'no-store',
   'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
@@ -36,6 +36,10 @@ export function createHandler({ fetcher = fetch, now = () => Date.now(), originU
         body: JSON.stringify(input), redirect: 'manual', signal: controller.signal,
         eo: { timeoutSetting: { connectTimeout: 10000, readTimeout: 50000, writeTimeout: 15000 } },
       });
+      if (input.entryUrl && response.status === 200) {
+        const resolved = JSON.parse(await readLimited(response, 8192));
+        return { source: parseSigned(resolved.url, now(), 5000) };
+      }
       if (response.status === 200 && response.headers.get('x-echo-origin-encoding') === 'base64') {
         const expected = input.end - input.start + 1;
         const encoded = JSON.parse(await readLimited(response, Math.ceil(expected / 3) * 4 + 4096));
@@ -57,6 +61,8 @@ export function createHandler({ fetcher = fetch, now = () => Date.now(), originU
           VERSION_CHANGED: '官方文件已更新，请获取新链接后重新下载。',
           ORIGIN_BUSY: '下载线路繁忙，请稍后重试。',
           UPSTREAM_RATE_LIMIT: '官方请求较多，请稍后重试。',
+          ORIGIN_UNREACHABLE: '回源连接暂时中断，正在尝试恢复。',
+          UPSTREAM_TIMEOUT: '回源传输暂时超时，正在尝试恢复。',
         };
         if (messages[error?.code]) throw liveError(error.code, messages[error.code], error.code === 'VERSION_CHANGED' ? 409 : error.code === 'LINK_EXPIRED' || error.code === 'UPSTREAM_DENIED' ? 410 : error.code === 'UPSTREAM_RATE_LIMIT' ? 429 : 503);
         throw liveError('ORIGIN_UNREACHABLE', '实时下载线路未能完成请求，请重新获取链接。');
@@ -86,14 +92,19 @@ export function createHandler({ fetcher = fetch, now = () => Date.now(), originU
         try { input = JSON.parse(await readLimited(request, 8192)); }
         catch { throw liveError('INVALID_BODY', '请求内容无效或过长。', 400); }
         const prepare = url.pathname === '/api/prepare';
-        const data = validateRead(prepare ? { url: input?.url, start: 0, end: 31 } : input, now());
+        let sourceUrl = input?.url;
+        if (prepare && typeof sourceUrl === 'string' && /^https:\/\/dl\.echo\.ac\//i.test(sourceUrl)) {
+          const resolved = await readOrigin({ entryUrl: parseEntry(sourceUrl) }, request.signal);
+          sourceUrl = resolved.source.url;
+        }
+        const data = validateRead(prepare ? { url: sourceUrl, start: 0, end: 31 } : input, now());
         if (!prepare && !data.etag) throw liveError('VERSION_REQUIRED', '请先确认官方版本。', 400);
         const { response: part, metadata } = await readOrigin(data, request.signal);
         if (prepare) {
           const bytes = new Uint8Array(await part.arrayBuffer());
           if (bytes.length !== 32 || bytes[0] !== 77 || bytes[1] !== 90) throw liveError('INVALID_FILE_RESPONSE', '官方返回的内容不是 Windows 程序。');
           parseSigned(data.url, now(), 5000);
-          response = json({ ...metadata, filename: data.filename, expiresAt: data.expiresAt, checkedAt: new Date(now()).toISOString(), delivery: 'live', download: '/api/chunk' });
+          response = json({ ...metadata, sourceUrl: data.url, filename: data.filename, expiresAt: data.expiresAt, expiresInMs: data.expiresAt - now(), checkedAt: new Date(now()).toISOString(), delivery: 'live', download: '/api/chunk' });
         } else {
           const headers = new Headers({ 'Content-Type': 'application/octet-stream', 'Content-Length': String(data.end - data.start + 1), 'Content-Range': `bytes ${data.start}-${data.end}/${metadata.size}`, ETag: metadata.etag, 'X-Echo-Delivery': 'live' });
           response = new Response(part.body, { status: 206, headers });

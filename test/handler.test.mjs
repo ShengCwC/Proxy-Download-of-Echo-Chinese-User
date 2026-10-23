@@ -49,8 +49,37 @@ test('expired addresses and unsafe targets do not reach the browser origin', asy
   const handle = createHandler({ ...config, fetcher: async () => { throw new Error('must not fetch'); } });
   assert.equal((await handle(post('/api/prepare', { url: signed('20261015T050000Z') }))).status, 410);
   assert.equal((await handle(post('/api/prepare', { url: signed().replace('builds.echo.ac', 'evil.test') }))).status, 400);
-  assert.equal((await handle(post('/api/prepare', { url: 'https://dl.echo.ac/example-token' }))).status, 400);
+  assert.equal((await handle(post('/api/prepare', { url: 'https://dl.echo.ac/example-token?unsafe=1' }))).status, 400);
   assert.equal((await handle(post('/api/chunk', { url: signed(), start: 0, end: 31 }))).status, 400);
+});
+
+test('an official entry is freshly resolved before every version check and never reaches chunk validation directly', async () => {
+  let resolutions = 0;
+  const handle = createHandler({ ...config, fetcher: async (url, init) => {
+    const input = JSON.parse(init.body);
+    if (input.entryUrl) {
+      resolutions++; assert.equal(input.entryUrl, 'https://dl.echo.ac/example-token');
+      assert.equal(init.headers.Authorization, `Bearer ${secret}`);
+      return Response.json({ url: signed() });
+    }
+    return fixture()(url, init);
+  } });
+  for (let n = 0; n < 2; n++) {
+    const response = await handle(post('/api/prepare', { url: 'https://dl.echo.ac/example-token' }));
+    assert.equal(response.status, 200);
+    const info = await response.json(); assert.equal(info.sourceUrl, signed()); assert.equal(info.expiresInMs, 120000);
+  }
+  assert.equal(resolutions, 2);
+  assert.equal((await handle(post('/api/chunk', { url: 'https://dl.echo.ac/example-token', start: 0, end: 31 }))).status, 400);
+});
+
+test('entry resolution rejects a substituted or expired signed target before reading any file', async () => {
+  for (const resolved of [signed().replace('builds.echo.ac', 'evil.test'), signed('20261015T050000Z')]) {
+    let calls = 0;
+    const handle = createHandler({ ...config, fetcher: async () => { calls++; return Response.json({ url: resolved }); } });
+    const response = await handle(post('/api/prepare', { url: 'https://dl.echo.ac/example-token' }));
+    assert.ok([400, 410].includes(response.status)); assert.equal(calls, 1);
+  }
 });
 test('API refuses cross-site submissions, malformed bodies, excess ranges and unpinned requests', async () => {
   const handle = createHandler(config);

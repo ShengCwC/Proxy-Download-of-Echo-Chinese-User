@@ -1,1 +1,1 @@
-{"buildCommand":"npm run build","outputDirectory":"dist","overseasRegions":["ap-hongkong"]}
+{"buildCommand":"npm run build","outputDirectory":"dist","cloudFunctions":{"maxDuration":60,"regions":{"overseas":["ap-hongkong"]}}}
